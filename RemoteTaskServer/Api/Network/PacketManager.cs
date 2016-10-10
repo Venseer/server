@@ -4,12 +4,12 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using Newtonsoft.Json.Linq;
-using UlteriusServer.Api.Api.Controllers.Impl;
 using UlteriusServer.Api.Network.Messages;
 using UlteriusServer.Api.Network.PacketHandlers;
 using UlteriusServer.Utilities;
 using UlteriusServer.Utilities.Security;
 using UlteriusServer.WebSocketAPI.Authentication;
+using vtortola.WebSockets;
 
 #endregion
 
@@ -27,6 +27,7 @@ namespace UlteriusServer.Api.Network
             RequestNetworkInformation,
             RequestSystemInformation,
             StartProcess,
+            SaveSettings,
             KillProcess,
             GenerateNewKey,
             EmptyApiKey,
@@ -71,13 +72,33 @@ namespace UlteriusServer.Api.Network
             SearchFiles,
             StopScreenShare,
             CheckScreenShare,
-            NoAuth
+            NoAuth,
+            MouseMove,
+            MouseDown,
+            MouseScroll,
+            MouseUp,
+            LeftClick,
+            LeftDblClick,
+            RightClick,
+            KeyDown,
+            KeyUp,
+            FullFrame,
+            ListPorts,
+            AddOrUpdateJob,
+            StopJobDaemon,
+            StartJobDaemon,
+            GetJobDaemonStatus,
+            RemoveJob,
+            GetJobContents,
+            GetAllJobs,
+            GetDescription
         }
 
         #endregion
 
         private readonly List<object> _args = new List<object>();
         private readonly AuthClient _authClient;
+        private readonly WebSocket _client;
         private readonly string _plainText = string.Empty;
         private string _endPoint;
         private Type _packetHandler;
@@ -89,9 +110,10 @@ namespace UlteriusServer.Api.Network
         /// </summary>
         /// <param name="authClient"></param>
         /// <param name="data"></param>
-        public PacketManager(AuthClient authClient, byte[] data)
+        public PacketManager(AuthClient authClient, WebSocket client, byte[] data)
         {
             _authClient = authClient;
+            _client = client;
             try
             {
                 var keyBytes = Encoding.UTF8.GetBytes(Rsa.SecureStringToString(authClient.AesKey));
@@ -110,9 +132,11 @@ namespace UlteriusServer.Api.Network
         /// </summary>
         /// <param name="authClient"></param>
         /// <param name="packetData"></param>
-        public PacketManager(AuthClient authClient, string packetData)
+        public PacketManager(AuthClient authClient, WebSocket client, string packetData)
         {
+      
             _authClient = authClient;
+            _client = client;
             try
             {
                 if ((bool) Settings.Get("TaskServer").Encryption)
@@ -148,6 +172,8 @@ namespace UlteriusServer.Api.Network
         {
             switch (endpoint)
             {
+                case "listports":
+                    return new PacketInfo { Type = PacketTypes.ListPorts, Handler = typeof(ServerPacketHandler) };
                 case "authenticate":
                     return new PacketInfo {Type = PacketTypes.Authenticate, Handler = typeof(ServerPacketHandler)};
                 case "requestgpuinformation":
@@ -184,20 +210,8 @@ namespace UlteriusServer.Api.Network
                     return new PacketInfo {Type = PacketTypes.StartProcess, Handler = typeof(ProcessPacketHandler)};
                 case "killprocess":
                     return new PacketInfo {Type = PacketTypes.KillProcess, Handler = typeof(ProcessPacketHandler)};
-                case "togglewebserver":
-                    return new PacketInfo {Type = PacketTypes.ToggleWebServer, Handler = typeof(SettingsPacketHandler)};
-                case "changewebserverport":
-                    return new PacketInfo
-                    {
-                        Type = PacketTypes.ChangeWebServerPort,
-                        Handler = typeof(SettingsPacketHandler)
-                    };
-                case "changewebfilepath":
-                    return new PacketInfo
-                    {
-                        Type = PacketTypes.ChangeWebFilePath,
-                        Handler = typeof(SettingsPacketHandler)
-                    };
+                case "savesettings":
+                    return new PacketInfo { Type = PacketTypes.SaveSettings, Handler = typeof(SettingsPacketHandler) };
                 case "startscreenshare":
                     return new PacketInfo
                     {
@@ -210,42 +224,7 @@ namespace UlteriusServer.Api.Network
                         Type = PacketTypes.StopScreenShare,
                         Handler = typeof(ScreenSharePacketHandler)
                     };
-                case "changescreensharepass":
-                    return new PacketInfo
-                    {
-                        Type = PacketTypes.ChangeScreenSharePass,
-                        Handler = typeof(SettingsPacketHandler)
-                    };
-                case "changeloadplugins":
-                    return new PacketInfo
-                    {
-                        Type = PacketTypes.ChangeLoadPlugins,
-                        Handler = typeof(SettingsPacketHandler)
-                    };
-                case "changetaskserverport":
-                    return new PacketInfo
-                    {
-                        Type = PacketTypes.ChangeTaskServerPort,
-                        Handler = typeof(SettingsPacketHandler)
-                    };
-                case "changenetworkresolve":
-                    return new PacketInfo
-                    {
-                        Type = PacketTypes.ChangeNetworkResolve,
-                        Handler = typeof(SettingsPacketHandler)
-                    };
-                case "changescreenshareport":
-                    return new PacketInfo
-                    {
-                        Type = PacketTypes.ChangeScreenSharePort,
-                        Handler = typeof(SettingsPacketHandler)
-                    };
-                case "changeuseterminal":
-                    return new PacketInfo
-                    {
-                        Type = PacketTypes.ChangeUseTerminal,
-                        Handler = typeof(SettingsPacketHandler)
-                    };
+                
                 case "getcurrentsettings":
                     return new PacketInfo
                     {
@@ -268,10 +247,6 @@ namespace UlteriusServer.Api.Network
                     return new PacketInfo {Type = PacketTypes.RemoveFile, Handler = typeof(FilePacketHandler)};
                 case "searchfiles":
                     return new PacketInfo {Type = PacketTypes.SearchFiles, Handler = typeof(FilePacketHandler)};
-                case "getpendingplugins":
-                    return new PacketInfo {Type = PacketTypes.GetPendingPlugins, Handler = typeof(PluginPacketHandler)};
-                case "approveplugin":
-                    return new PacketInfo {Type = PacketTypes.ApprovePlugin, Handler = typeof(PluginPacketHandler)};
                 case "aeshandshake":
                     return new PacketInfo {Type = PacketTypes.AesHandshake, Handler = typeof(ServerPacketHandler)};
                 case "requestfile":
@@ -294,12 +269,40 @@ namespace UlteriusServer.Api.Network
                     return new PacketInfo {Type = PacketTypes.StopCamera, Handler = typeof(WebCamPacketHandler)};
                 case "startcamera":
                     return new PacketInfo {Type = PacketTypes.StartCamera, Handler = typeof(WebCamPacketHandler)};
-                case "getbadplugins":
-                    return new PacketInfo {Type = PacketTypes.GetBadPlugins, Handler = typeof(PluginPacketHandler)};
-                case "getplugins":
-                    return new PacketInfo {Type = PacketTypes.GetPlugins, Handler = typeof(PluginPacketHandler)};
-                case "plugin":
-                    return new PacketInfo {Type = PacketTypes.Plugin, Handler = typeof(PluginPacketHandler)};
+                case "mousemove":
+                    return new PacketInfo { Type = PacketTypes.MouseMove, Handler = typeof(ScreenSharePacketHandler) };
+                case "mousedown":
+                    return new PacketInfo { Type = PacketTypes.MouseDown, Handler = typeof(ScreenSharePacketHandler) };
+                case "mousescroll":
+                    return new PacketInfo { Type = PacketTypes.MouseScroll, Handler = typeof(ScreenSharePacketHandler) };
+                case "mouseup":
+                    return new PacketInfo { Type = PacketTypes.MouseUp, Handler = typeof(ScreenSharePacketHandler) };
+                case "leftclick":
+                    return new PacketInfo { Type = PacketTypes.LeftClick, Handler = typeof(ScreenSharePacketHandler) };
+                case "rightclick":
+                    return new PacketInfo { Type = PacketTypes.RightClick, Handler = typeof(ScreenSharePacketHandler) };
+                case "keydown":
+                    return new PacketInfo { Type = PacketTypes.KeyDown, Handler = typeof(ScreenSharePacketHandler) };
+                case "keyup":
+                    return new PacketInfo { Type = PacketTypes.KeyUp, Handler = typeof(ScreenSharePacketHandler) };
+                case "fullframe":
+                    return new PacketInfo { Type = PacketTypes.FullFrame, Handler = typeof(ScreenSharePacketHandler) };
+                case "addorupdatejob":
+                    return new PacketInfo { Type = PacketTypes.AddOrUpdateJob, Handler = typeof(CronJobPacketHandler) };
+                case "stopjobdaemon":
+                    return new PacketInfo { Type = PacketTypes.StopJobDaemon, Handler = typeof(CronJobPacketHandler) };
+                case "startjobdaemon":
+                    return new PacketInfo { Type = PacketTypes.StartJobDaemon, Handler = typeof(CronJobPacketHandler) };
+                case "getjobdaemonstatus":
+                    return new PacketInfo { Type = PacketTypes.GetJobDaemonStatus, Handler = typeof(CronJobPacketHandler) };
+                case "removejob":
+                    return new PacketInfo { Type = PacketTypes.RemoveJob, Handler = typeof(CronJobPacketHandler) };
+                case "getjobcontents":
+                    return new PacketInfo { Type = PacketTypes.GetJobContents, Handler = typeof(CronJobPacketHandler) };
+                case "getalljobs":
+                    return new PacketInfo { Type = PacketTypes.GetAllJobs, Handler = typeof(CronJobPacketHandler) };
+                case "getdescription":
+                    return new PacketInfo { Type = PacketTypes.GetDescription, Handler = typeof(CronJobPacketHandler) };
                 default:
                     return new PacketInfo
                     {
@@ -323,6 +326,7 @@ namespace UlteriusServer.Api.Network
             }
             try
             {
+             
                 var deserializedPacket = JObject.Parse(_plainText);
                 if (deserializedPacket != null)
                 {
@@ -335,7 +339,7 @@ namespace UlteriusServer.Api.Network
                     var packetInfo = GetPacketInfo(_endPoint);
                     _packetHandler = packetInfo.Handler;
                     _packetType = packetInfo.Type;
-                    return new Packet(_authClient, _endPoint, _syncKey, _args, _packetType, _packetHandler);
+                    return new Packet(_authClient, _client, _endPoint, _syncKey, _args, _packetType, _packetHandler);
                 }
             }
             catch (Exception e)

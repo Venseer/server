@@ -4,10 +4,13 @@ using System;
 using System.Diagnostics;
 using System.DirectoryServices.AccountManagement;
 using System.DirectoryServices.ActiveDirectory;
+using System.IO;
 using System.Reflection;
 using UlteriusServer.Api.Network.Messages;
+using UlteriusServer.Utilities;
 using UlteriusServer.Utilities.Security;
 using UlteriusServer.WebSocketAPI.Authentication;
+using vtortola.WebSockets;
 
 #endregion
 
@@ -16,6 +19,7 @@ namespace UlteriusServer.Api.Network.PacketHandlers
     public class ServerPacketHandler : PacketHandler
     {
         private AuthClient _authClient;
+        private WebSocket _client;
         private MessageBuilder _builder;
         private Packet _packet;
 
@@ -24,9 +28,10 @@ namespace UlteriusServer.Api.Network.PacketHandlers
         {
             try
             {
-                var authKey = _authClient.Client.GetHashCode().ToString();
+
+                var connectionId = CookieManager.GetConnectionId(_client);
                 AuthClient authClient;
-                UlteriusApiServer.AllClients.TryGetValue(authKey, out authClient);
+                UlteriusApiServer.AllClients.TryGetValue(connectionId, out authClient);
                 if (authClient != null)
                 {
                     var privateKey = authClient.PrivateKey;
@@ -36,7 +41,7 @@ namespace UlteriusServer.Api.Network.PacketHandlers
                     authClient.AesIv = Rsa.Decryption(privateKey, encryptedIv);
                     authClient.AesShook = true;
                     //update the auth client
-                    UlteriusApiServer.AllClients[authKey] = authClient;
+                    UlteriusApiServer.AllClients[connectionId] = authClient;
                     var endData = new
                     {
                         shook = true
@@ -64,16 +69,33 @@ namespace UlteriusServer.Api.Network.PacketHandlers
             return Environment.UserName;
         }
 
+        public void ListPorts()
+        {
+            var webServerPort = (ushort)Settings.Get("WebServer").WebServerPort;
+            var apiPort = (ushort)Settings.Get("TaskServer").TaskServerPort;
+            var webcamPort = (ushort)Settings.Get("Webcams").WebcamPort;
+            var terminalPort = (ushort)Settings.Get("Terminal").TerminalPort;
+            var screenSharePort = (ushort)Settings.Get("ScreenShareService").ScreenSharePort;
+            var portData = new
+            {
+              webServerPort,
+              apiPort,
+              webcamPort,
+              terminalPort,
+              screenSharePort
+            };
+            _builder.WriteMessage(portData);
+        }
 
         public void Login()
         {
-            var strMachineName = Environment.MachineName;
 
+
+            var connectionId = CookieManager.GetConnectionId(_client);
             var password = _packet.Args[0].ToString();
             var authenticated = WindowsAuth.Auth(password);
-            var authKey = _authClient.Client.GetHashCode().ToString();
             AuthClient authClient;
-            UlteriusApiServer.AllClients.TryGetValue(authKey, out authClient);
+            UlteriusApiServer.AllClients.TryGetValue(connectionId, out authClient);
             if (authClient != null)
             {
                 if (authClient.Authenticated)
@@ -86,12 +108,12 @@ namespace UlteriusServer.Api.Network.PacketHandlers
                     return;
                 }
                 authClient.Authenticated = authenticated;
-                UlteriusApiServer.AllClients[authKey] = authClient;
+                UlteriusApiServer.AllClients[connectionId] = authClient;
             }
             var authenticationData = new
             {
                 authenticated,
-                message = authenticated ? "Login was successfull" : "Login was unsuccessful"
+                message = authenticated ? "Login was successful" : "Login was unsuccessful"
             };
             _builder.WriteMessage(authenticationData);
         }
@@ -108,18 +130,24 @@ namespace UlteriusServer.Api.Network.PacketHandlers
             };
             _builder.WriteMessage(data);
             // Starts a new instance of the program itself
-            var fileName = Assembly.GetExecutingAssembly().Location;
-            Process.Start(fileName);
-
-            // Closes the current process
+            // Starts a new instance of the program itself
+            var fileName = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
+                "Bootstrapper.exe");
+            var startInfo = new ProcessStartInfo(fileName)
+            {
+                WindowStyle = ProcessWindowStyle.Minimized,
+                Arguments = "restart"
+            };
+            Process.Start(startInfo);
             Environment.Exit(0);
         }
 
         public override void HandlePacket(Packet packet)
         {
+            _client = packet.Client;
             _authClient = packet.AuthClient;
             _packet = packet;
-            _builder = new MessageBuilder(_authClient, _packet.EndPoint, _packet.SyncKey);
+            _builder = new MessageBuilder(_authClient, _client, _packet.EndPoint, _packet.SyncKey);
             switch (_packet.PacketType)
             {
                 case PacketManager.PacketTypes.Authenticate:
@@ -130,6 +158,9 @@ namespace UlteriusServer.Api.Network.PacketHandlers
                     break;
                 case PacketManager.PacketTypes.RestartServer:
                     RestartServer();
+                    break;
+                case PacketManager.PacketTypes.ListPorts:
+                   ListPorts();
                     break;
                 case PacketManager.PacketTypes.CheckUpdate:
                     CheckForUpdate();

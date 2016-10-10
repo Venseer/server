@@ -2,9 +2,10 @@
 
 using System;
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 using UlteriusServer.Api.Services.Network;
 using UlteriusServer.Properties;
@@ -20,27 +21,25 @@ namespace UlteriusServer.Forms.Utilities
         public static ContextMenu Menu;
         public static MenuItem ExitProgram;
         public static MenuItem OpenClient;
-        public static MenuItem OpenSettings;
-        public static MenuItem OpenLogs;
+        public static MenuItem OpenDonate;
+        public static MenuItem About;
         public static MenuItem RestartProgram;
         public static NotifyIcon NotificationIcon;
 
-
-        private static void OpenLogsEvent(object sender, EventArgs e)
-        {
-            try
-            {
-                Process.Start(Path.Combine(AppEnvironment.DataPath, "server.log"));
-            }
-            catch (Exception)
-            {
-              //rare but can fail
-            }
-        }
+        public static MenuItem OpenSettings { get; set; }
+        public static bool AboutOpen;
 
         private static void RestartEvent(object sender, EventArgs e)
         {
-            Application.Restart();
+            // Starts a new instance of the program itself
+            var fileName = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
+                "Bootstrapper.exe");
+            var startInfo = new ProcessStartInfo(fileName)
+            {
+                WindowStyle = ProcessWindowStyle.Minimized,
+                Arguments = "restart"
+            };
+            Process.Start(startInfo);
             Environment.Exit(0);
         }
 
@@ -48,7 +47,7 @@ namespace UlteriusServer.Forms.Utilities
         {
             try
             {
-                Process.Start(Settings.FilePath);
+                Process.Start(AppEnvironment.DataPath);
             }
             catch (Exception)
             {
@@ -58,7 +57,7 @@ namespace UlteriusServer.Forms.Utilities
 
         private static void OpenClientEvent(object sender, EventArgs e)
         {
-            var ip = NetworkService.GetIPv4Address();
+            var ip = NetworkService.GetDisplayAddress();
             var httpPort = HttpServer.GlobalPort;
             Process.Start($"http://{ip}:{httpPort}");
         }
@@ -79,41 +78,60 @@ namespace UlteriusServer.Forms.Utilities
 
         public static void ShowTray()
         {
-
-         RefreshTrayArea();
+            RefreshTrayArea();
             Menu = new ContextMenu();
             RestartProgram = new MenuItem("Restart Server");
-            ExitProgram = new MenuItem("Exit");
             OpenClient = new MenuItem("Open Client");
-            OpenLogs = new MenuItem("Open Logs");
-            OpenSettings = new MenuItem("Open Settings");
-            Menu.MenuItems.Add(0, ExitProgram);
-            Menu.MenuItems.Add(1, RestartProgram);
-            Menu.MenuItems.Add(2, OpenClient);
-            Menu.MenuItems.Add(3, OpenSettings);
-            Menu.MenuItems.Add(4, OpenLogs);
-
+            About = new MenuItem("About");
+            OpenSettings = new MenuItem("Open App Data");
+            ExitProgram = new MenuItem("Exit");
+            OpenDonate = new MenuItem("Donate");
+            Menu.MenuItems.Add(0, OpenClient);
+            Menu.MenuItems.Add(1, OpenSettings);
+            Menu.MenuItems.Add(2, RestartProgram);
+            Menu.MenuItems.Add(3, OpenDonate);
+            Menu.MenuItems.Add(4, About);
+            Menu.MenuItems.Add(5, ExitProgram);
+            About.Click += AboutEvent;
+            ExitProgram.Click += ExitEvent;
+            RestartProgram.Click += RestartEvent;
+            OpenClient.Click += OpenClientEvent;
+            OpenSettings.Click += OpenSettingsEvent;
+            OpenDonate.Click += OpenDonateEvent;
             NotificationIcon = new NotifyIcon
             {
                 Icon = Resources.ApplicationIcon,
                 BalloonTipIcon = ToolTipIcon.Info,
                 BalloonTipText = "Ulterius Server Started -- Open the Client in the Tray Icon",
                 ContextMenu = Menu,
-                Text = "Main"
+                Text = "Ulterius Server",
+                Visible = true
             };
-           
-
-
-            ExitProgram.Click += ExitEvent;
-            RestartProgram.Click += RestartEvent;
-            OpenClient.Click += OpenClientEvent;
-            OpenSettings.Click += OpenSettingsEvent;
-            OpenLogs.Click += OpenLogsEvent;
-            NotificationIcon.Visible = true;
+            NotificationIcon.DoubleClick += OpenClientEvent;
+            Console.WriteLine("Starting notify icon");
             NotificationIcon.ShowBalloonTip(5000);
             Application.Run();
+            Console.WriteLine("Started");
+        }
+
+        private static void AboutEvent(object sender, EventArgs e)
+        {
+          
+            Thread thread = new Thread(OpenAbout) {Name = "About"};
+            thread.Start();
+         
+        }
+
+        private static void OpenAbout()
+        {
+            Application.Run(new AboutBox()); // or whatever
+            AboutOpen = true;
+        }
 
 
+        private static void OpenDonateEvent(object sender, EventArgs e)
+        {
+            Process.Start("https://cash.me/$ulterius");
         }
 
         [DllImport("user32.dll")]

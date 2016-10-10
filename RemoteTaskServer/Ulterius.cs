@@ -5,11 +5,9 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Threading;
-using System.Threading.Tasks;
+using Newtonsoft.Json;
 using UlteriusServer.Api;
-using UlteriusServer.Api.Services.System;
-using UlteriusServer.Forms.Utilities;
+using UlteriusServer.Api.Services.LocalSystem;
 using UlteriusServer.TerminalServer;
 using UlteriusServer.Utilities;
 using UlteriusServer.WebCams;
@@ -22,7 +20,7 @@ namespace UlteriusServer
     public class Ulterius
     {
         private SystemService systemService;
-        private bool stop = false;
+
         public void Start()
         {
             if (Process.GetProcessesByName(
@@ -40,33 +38,48 @@ namespace UlteriusServer
                 ExceptionHandler.AddGlobalHandlers();
                 Console.WriteLine("Exception Handlers Attached");
             }
+
             //Fix screensize issues for Screen Share
             if (Environment.OSVersion.Version.Major >= 6)
             {
                 SetProcessDPIAware();
             }
-            Task.Factory.StartNew(Setup);
-            UlteriusTray.ShowTray();
+            Setup();
         }
 
         /// <summary>
-        /// Starts various parts of the server than loop to keep everything alive.
+        ///     Starts various parts of the server than loop to keep everything alive.
         /// </summary>
         private void Setup()
         {
             HideWindow();
             Console.WriteLine("Creating settings");
-            Settings.Initialize("Config.json");
+            try
+            {
+                Settings.Initialize("Config.json");
+            }
+            catch (JsonReaderException)
+            {
+                Console.WriteLine("Settings broken, fixing.");
+                var settingsPath = Path.Combine(AppEnvironment.DataPath, "Config.json");
+                //Handle settings failing to create, rarely happens but it does.
+                File.Delete(settingsPath);
+                Settings.Initialize("Config.json");
+            }
             Console.WriteLine("Configuring up server");
             Tools.ConfigureServer();
             var useTerminal = Convert.ToBoolean(Settings.Get("Terminal").AllowTerminal);
             var useWebServer = Convert.ToBoolean(Settings.Get("WebServer").ToggleWebServer);
-            Console.WriteLine("Loading Webcams");
-            WebCamManager.LoadWebcams();
+            var useWebCams = Convert.ToBoolean(Settings.Get("Webcams").UseWebcams);
+            if (useWebCams)
+            {
+                Console.WriteLine("Loading Webcams");
+                WebCamManager.LoadWebcams();
+            }
             if (useWebServer)
             {
                 Console.WriteLine("Setting up HTTP Server");
-                HttpServer.Setup();;
+                HttpServer.Setup();
             }
             systemService = new SystemService();
             Console.WriteLine("Creating system service");
@@ -79,7 +92,7 @@ namespace UlteriusServer
             }
             try
             {
-                var useUpnp = Convert.ToBoolean(Settings.Get("Network").UPnpEnabled);
+                var useUpnp = Convert.ToBoolean(Settings.Get("Network").UpnpEnabled);
                 if (useUpnp)
                 {
                     Console.WriteLine("Trying to forward ports");
@@ -89,11 +102,6 @@ namespace UlteriusServer
             catch (Exception)
             {
                 Console.WriteLine("Failed to forward ports");
-            }
-           
-            while (!stop)
-            {
-                Thread.Sleep(1);
             }
         }
 

@@ -5,11 +5,16 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using UlteriusServer.Api.Network.Messages;
 using UlteriusServer.Api.Services.Network;
 using UlteriusServer.Utilities;
+using UlteriusServer.Utilities.Extensions;
 using UlteriusServer.Utilities.Files;
+using UlteriusServer.Utilities.Security;
 using UlteriusServer.WebSocketAPI.Authentication;
+using vtortola.WebSockets;
+using ZetaLongPaths;
 using static UlteriusServer.Api.Network.PacketManager;
 using File = System.IO.File;
 
@@ -19,17 +24,11 @@ namespace UlteriusServer.Api.Network.PacketHandlers
 {
     public class FilePacketHandler : PacketHandler
     {
-        private const int EVERYTHING_OK = 0;
-        private const int EVERYTHING_ERROR_MEMORY = 1;
-        private const int EVERYTHING_ERROR_IPC = 2;
-        private const int EVERYTHING_ERROR_REGISTERCLASSEX = 3;
-        private const int EVERYTHING_ERROR_CREATEWINDOW = 4;
-        private const int EVERYTHING_ERROR_CREATETHREAD = 5;
-        private const int EVERYTHING_ERROR_INVALIDINDEX = 6;
-        private const int EVERYTHING_ERROR_INVALIDCALL = 7;
+
 
         private MessageBuilder _builder;
-        private AuthClient _client;
+        private AuthClient _authClient;
+        private WebSocket _client;
         private Packet _packet;
 
         public void CreateFileTree()
@@ -45,12 +44,9 @@ namespace UlteriusServer.Api.Network.PacketHandlers
             _builder.WriteMessage(tree);
         }
 
-        /*   public IEnumerable<string> Search(string keyWord)
-        {
-            return Search(keyWord, 0, int.MaxValue);
-        }*/
+ 
 
-        public long DirSize(DirectoryInfo d)
+        public long DirSize(ZlpDirectoryInfo d)
         {
             // Add file sizes.
             var fis = d.GetFiles();
@@ -61,55 +57,7 @@ namespace UlteriusServer.Api.Network.PacketHandlers
             return size;
         }
 
-        /*  public void EverythingReset()
-        {
-            Everything_Reset();
-        }
-
-        public IEnumerable<string> Search(string keyWord, int offset, int maxCount)
-        {
-            if (string.IsNullOrEmpty(keyWord))
-                throw new ArgumentNullException("keyWord");
-
-            if (offset < 0)
-                throw new ArgumentOutOfRangeException("offset");
-
-            if (maxCount < 0)
-                throw new ArgumentOutOfRangeException("maxCount");
-
-            Everything_SetSearch(keyWord);
-            Everything_SetOffset(offset);
-            Everything_SetMax(maxCount);
-            if (!Everything_Query())
-            {
-                switch (Everything_GetLastError())
-                {
-                    case StateCode.CreateThreadError:
-                        throw new CreateThreadException();
-                    case StateCode.CreateWindowError:
-                        throw new CreateWindowException();
-                    case StateCode.InvalidCallError:
-                        throw new InvalidCallException();
-                    case StateCode.InvalidIndexError:
-                        throw new InvalidIndexException();
-                    case StateCode.IPCError:
-                        throw new IPCErrorException();
-                    case StateCode.MemoryError:
-                        throw new MemoryErrorException();
-                    case StateCode.RegisterClassExError:
-                        throw new RegisterClassExException();
-                }
-                yield break;
-            }
-
-            const int bufferSize = 256;
-            var buffer = new StringBuilder(bufferSize);
-            for (var idx = 0; idx < Everything_GetNumResults(); ++idx)
-            {
-                Everything_GetResultFullPathName(idx, buffer, bufferSize);
-                yield return buffer.ToString();
-            }
-        }*/
+     
 
         private List<string> Search(string keyword)
         {
@@ -119,20 +67,6 @@ namespace UlteriusServer.Api.Network.PacketHandlers
 
         public void SearchFile()
         {
-            /*try
-            {
-                ConfigureSearch();
-            }
-            catch (Exception)
-            {
-                var error = new
-                {
-                    success = false,
-                    message = "Everything failed to configure."
-                };
-                _builder.WriteMessage(error);
-                return;
-            }*/
             try
             {
                 if (!UlteriusApiServer.FileSearchService.IsScanning())
@@ -188,28 +122,7 @@ namespace UlteriusServer.Api.Network.PacketHandlers
             }
         }
 
-        private void ConfigureSearch()
-        {
-            var startupDirEndingWithSlash = Path.GetDirectoryName(Process.GetCurrentProcess().MainModule.FileName) +
-                                            "\\";
-            var resolvedDomainTimeFileName = startupDirEndingWithSlash + "Everything.dll";
-            if (!File.Exists(resolvedDomainTimeFileName))
-            {
-                if (IntPtr.Size == 8)
-                {
-                    Console.WriteLine(@"x64 Everything Loaded");
-                    if (File.Exists(startupDirEndingWithSlash + "Everything64.dll"))
-
-                        File.Copy(startupDirEndingWithSlash + "Everything64.dll", resolvedDomainTimeFileName);
-                }
-                else
-                {
-                    Console.WriteLine(@"x86 Everything Loaded");
-                    if (File.Exists(startupDirEndingWithSlash + "Everything32.dll"))
-                        File.Copy(startupDirEndingWithSlash + "Everything32.dll", resolvedDomainTimeFileName);
-                }
-            }
-        }
+     
 
 
         public void RequestFile()
@@ -284,7 +197,7 @@ namespace UlteriusServer.Api.Network.PacketHandlers
         {
             var fileKey = _packet.Args[0].ToString();
             var destPath = _packet.Args[1].ToString();
-            var password = _packet.Args[2].ToString();
+            var password = _packet.Args[2].ToString().ToSecureString();
             FileManager.AddFile(password, destPath, fileKey);
             var approved = new
             {
@@ -309,18 +222,17 @@ namespace UlteriusServer.Api.Network.PacketHandlers
 
             var fileName = Path.GetFileName(path);
 
-            var ip = NetworkService.GetIPv4Address();
+            var ip = NetworkService.GetAddress();
             var port = (int) Settings.Get("WebServer").WebServerPort;
-            var data = File.ReadAllBytes(path);
 
-            var encryptedFile = _builder.PackFile(password, data);
-            try
+            var passwordBytes = Encoding.UTF8.GetBytes(password);
+
+            if (File.Exists(path))
             {
-                if (encryptedFile != null)
+                try
                 {
                     var tempPath = Path.Combine(tempFolderPath, fileName);
-
-                    File.WriteAllBytes(tempPath, encryptedFile);
+                    UlteriusAes.EncryptFile(passwordBytes, path, tempPath);
                     var tempWebPath = $"http://{ip}:{port}/temp/{fileName}";
                     var downloadData = new
                     {
@@ -329,34 +241,35 @@ namespace UlteriusServer.Api.Network.PacketHandlers
                     };
                     _builder.WriteMessage(downloadData);
                 }
-                else
+                catch (Exception e)
                 {
-                    var errorData = new
+
+                    var exceptionData = new
                     {
                         error = true,
-                        message = "Unable to encrypt file"
+                        message = e.Message
                     };
-                    _builder.WriteMessage(errorData);
+
+                    _builder.WriteMessage(exceptionData);
                 }
             }
-            catch (
-                Exception e)
+            else
             {
-                var exceptionData = new
+                var errorData = new
                 {
                     error = true,
-                    message = e.Message
+                    message = "Unable to encrypt file"
                 };
-
-                _builder.WriteMessage(exceptionData);
+                _builder.WriteMessage(errorData);
             }
         }
 
         public override void HandlePacket(Packet packet)
         {
-            _client = packet.AuthClient;
+            _client = packet.Client;
+            _authClient = packet.AuthClient;
             _packet = packet;
-            _builder = new MessageBuilder(_client, _packet.EndPoint, _packet.SyncKey);
+            _builder = new MessageBuilder(_authClient, _client, _packet.EndPoint, _packet.SyncKey);
             switch (_packet.PacketType)
             {
                 case PacketTypes.SearchFiles:
@@ -377,65 +290,6 @@ namespace UlteriusServer.Api.Network.PacketHandlers
             }
         }
 
-        /// <summary>
-        ///     ///
-        /// </summary>
-        public class MemoryErrorException : ApplicationException
-        {
-        }
-
-        /// <summary>
-        ///     ///
-        /// </summary>
-        public class IPCErrorException : ApplicationException
-        {
-        }
-
-        /// <summary>
-        ///     ///
-        /// </summary>
-        public class RegisterClassExException : ApplicationException
-        {
-        }
-
-        /// <summary>
-        ///     ///
-        /// </summary>
-        public class CreateWindowException : ApplicationException
-        {
-        }
-
-        /// <summary>
-        ///     ///
-        /// </summary>
-        public class CreateThreadException : ApplicationException
-        {
-        }
-
-        /// <summary>
-        ///     ///
-        /// </summary>
-        public class InvalidIndexException : ApplicationException
-        {
-        }
-
-        /// <summary>
-        ///     ///
-        /// </summary>
-        public class InvalidCallException : ApplicationException
-        {
-        }
-
-        private enum StateCode
-        {
-            OK,
-            MemoryError,
-            IPCError,
-            RegisterClassExError,
-            CreateWindowError,
-            CreateThreadError,
-            InvalidIndexError,
-            InvalidCallError
-        }
+     
     }
 }

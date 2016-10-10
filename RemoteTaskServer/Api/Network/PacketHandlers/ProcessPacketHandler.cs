@@ -6,21 +6,22 @@ using System.Diagnostics;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
-using UlteriusServer.Api.Network;
 using UlteriusServer.Api.Network.Messages;
 using UlteriusServer.Api.Network.Models;
 using UlteriusServer.Utilities;
 using UlteriusServer.WebSocketAPI.Authentication;
+using vtortola.WebSockets;
 
 #endregion
 
-namespace UlteriusServer.Api.Api.Controllers.Impl
+namespace UlteriusServer.Api.Network.PacketHandlers
 {
     public class ProcessPacketHandler : PacketHandler
     {
         private MessageBuilder _builder;
-        private AuthClient _client;
+        private AuthClient _authClient;
         private Packet _packet;
+        private WebSocket _client;
 
 
         public void StartProcess()
@@ -84,10 +85,7 @@ namespace UlteriusServer.Api.Api.Controllers.Impl
             {
                 return "null";
             }
-            var icon = IconTools.GetIconForFile(
-                path,
-                ShellIconSize.LargeIcon
-                );
+            var icon = IconTools.GetIconForFile(path,ShellIconSize.LargeIcon);
             if (icon == null) return "null";
             var ms = new MemoryStream();
             icon.ToBitmap().Save(ms, ImageFormat.Png);
@@ -140,9 +138,10 @@ namespace UlteriusServer.Api.Api.Controllers.Impl
 
         public override void HandlePacket(Packet packet)
         {
-            _client = packet.AuthClient;
+            _client = packet.Client;
+            _authClient = packet.AuthClient;
             _packet = packet;
-            _builder = new MessageBuilder(_client, _packet.EndPoint, _packet.SyncKey);
+            _builder = new MessageBuilder(_authClient, _client, _packet.EndPoint, _packet.SyncKey);
             switch (_packet.PacketType)
             {
                 case PacketManager.PacketTypes.RequestProcessInformation:

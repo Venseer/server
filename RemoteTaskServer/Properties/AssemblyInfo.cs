@@ -2,7 +2,6 @@
 
 using System.Reflection;
 using System.Runtime.InteropServices;
-using log4net.Config;
 
 #endregion
 
@@ -11,11 +10,11 @@ using log4net.Config;
 // associated with an assembly.
 
 [assembly: AssemblyTitle("Ulterius™ Server")]
-[assembly: AssemblyDescription("")]
+[assembly: AssemblyDescription("Ulterius is currently in beta, follow updates at blog.ulterius.io")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("Ulterius")]
 [assembly: AssemblyProduct("Ulterius Server")]
-[assembly: AssemblyCopyright("Copyright © Andrew Sampson 2016")]
+[assembly: AssemblyCopyright("Copyright © Octopodal Solutions 2016")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
@@ -40,6 +39,5 @@ using log4net.Config;
 // by using the '*' as shown below:
 // [assembly: AssemblyVersion("1.0.*")]
 
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
-[assembly: XmlConfigurator]
+[assembly: AssemblyVersion("1.3.3.0")]
+[assembly: AssemblyFileVersion("1.3.3.0")]

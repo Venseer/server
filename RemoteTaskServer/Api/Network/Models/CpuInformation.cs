@@ -16,7 +16,8 @@
         public static uint Cores { get; set; }
         public static uint Threads { get; set; }
         public static string Architecture { get; set; }
-        public static string JSON { get; set; }
+        public static float CpuFanSpeed { get; set; }
+
         public static uint CurrentClockSpeed { get; set; }
         public static uint CurrentVoltage { get; set; }
 

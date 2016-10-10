@@ -7,9 +7,11 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
-using System.Web.Script.Serialization;
+using MassTransit.Transports;
+using Newtonsoft.Json;
 using UlteriusServer.Api.Services.Network;
 using UlteriusServer.Properties;
 using UlteriusServer.Utilities;
@@ -112,7 +114,7 @@ namespace UlteriusServer.WebServer
 
         private HttpListener _listener;
         private string _rootDirectory;
-        private Task _serverThread;
+        private Thread _serverThread;
 
         /// <summary>
         ///     Construct server with given port.
@@ -131,8 +133,8 @@ namespace UlteriusServer.WebServer
         public HttpServer(string path)
         {
             //get an empty port
-            var bindLocal = (bool) Settings.Get("Network").BindLocal;
-            var l = new TcpListener(bindLocal ? IPAddress.Parse(NetworkService.GetIPv4Address()) : IPAddress.Any, 0);
+   
+            var l = new TcpListener(NetworkService.GetAddress(), 0);
             l.Start();
             var port = ((IPEndPoint) l.LocalEndpoint).Port;
             l.Stop();
@@ -159,13 +161,13 @@ namespace UlteriusServer.WebServer
         /// </summary>
         public void Stop()
         {
-            _serverThread.Dispose();
+            _serverThread.Abort( );
             _listener.Stop();
         }
 
-        private void Listen()
+        private async void Listen()
         {
-            var prefix = "http://*:22006/";
+            var prefix = $"http://*:{Port}/";
             var username = Environment.GetEnvironmentVariable("USERNAME");
             var userdomain = Environment.GetEnvironmentVariable("USERDOMAIN");
             _listener = new HttpListener();
@@ -192,7 +194,7 @@ namespace UlteriusServer.WebServer
             {
                 try
                 {
-                    var context = _listener.GetContext();
+                    var context = await _listener.GetContextAsync();
                     Process(context);
                 }
                 catch (Exception)
@@ -232,7 +234,8 @@ namespace UlteriusServer.WebServer
                             success = saved,
                             message = "File Uploaded!"
                         };
-                        var json = new JavaScriptSerializer().Serialize(responseObject);
+                        var json = JsonConvert.SerializeObject(responseObject);
+    
                         writer.WriteLine(json);
                     }
                     else
@@ -243,7 +246,7 @@ namespace UlteriusServer.WebServer
                             success = false,
                             message = "The posted file was not recognised."
                         };
-                        var json = new JavaScriptSerializer().Serialize(responseObject);
+                        var json = JsonConvert.SerializeObject(responseObject);
                         writer.WriteLine(json);
                     }
                     context.Response.AddHeader("Access-Control-Allow-Origin", "*");
@@ -338,7 +341,7 @@ namespace UlteriusServer.WebServer
         {
             _rootDirectory = path;
             Port = port;
-            _serverThread = new Task(Listen);
+            _serverThread = new Thread(Listen);
             _serverThread.Start();
         }
     }

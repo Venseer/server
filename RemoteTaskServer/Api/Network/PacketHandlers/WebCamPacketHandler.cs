@@ -2,12 +2,15 @@
 
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Ionic.Zlib;
 using UlteriusServer.Api.Network.Messages;
+using UlteriusServer.Utilities.Extensions;
 using UlteriusServer.WebCams;
 using UlteriusServer.WebSocketAPI.Authentication;
+using vtortola.WebSockets;
 
 #endregion
 
@@ -16,8 +19,9 @@ namespace UlteriusServer.Api.Network.PacketHandlers
     public class WebCamPacketHandler : PacketHandler
     {
         private MessageBuilder _builder;
-        private AuthClient _client;
+        private AuthClient _authClient;
         private Packet _packet;
+        private WebSocket _client;
 
 
         public void RefreshCameras()
@@ -154,11 +158,9 @@ namespace UlteriusServer.Api.Network.PacketHandlers
                 if (streamThread != null && !streamThread.IsCanceled && !streamThread.IsCompleted &&
                     streamThread.Status == TaskStatus.Running)
                 {
-                    streamThread.Dispose();
+                    streamThread.TryDispose();
                     WebCamManager.Frames.Clear();
-
-
-                    if (_client.Client.IsConnected)
+                    if (_client.IsConnected)
                     {
                         var data = new
                         {
@@ -171,7 +173,7 @@ namespace UlteriusServer.Api.Network.PacketHandlers
             }
             catch (Exception e)
             {
-                if (_client.Client.IsConnected)
+                if (_client.IsConnected)
                 {
                     var data = new
                     {
@@ -188,13 +190,14 @@ namespace UlteriusServer.Api.Network.PacketHandlers
         public void GetWebCamFrame(string cameraId)
         {
             var camera = WebCamManager.Cameras[cameraId];
-
-            while (_client.Client.IsConnected && camera != null && camera.IsRunning)
+  
+            while (_client != null && _client.IsConnected && camera != null && camera.IsRunning)
             {
-                Console.WriteLine("test");
                 try
 
                 {
+                
+
                     var imageBytes = WebCamManager.Frames[cameraId];
                     if (imageBytes.Length > 0)
                     {
@@ -205,15 +208,15 @@ namespace UlteriusServer.Api.Network.PacketHandlers
                                 var compressed = ZlibStream.CompressBuffer(imageBytes);
                                 binaryWriter.Write(compressed);
                             }
-
+                            //JSON.net turns my byte array into base64.
                             var cameraData = new
                             {
                                 cameraId,
-                                cameraData = memoryStream.ToArray()
+                                cameraData = memoryStream.ToArray().Select(b => (int)b).ToArray()
                             };
                             _builder.Endpoint = "cameraframe";
                             _builder.WriteMessage(cameraData);
-                            Thread.Sleep(200);
+                            Thread.Sleep(100);
                         }
                     }
                 }
@@ -235,9 +238,10 @@ namespace UlteriusServer.Api.Network.PacketHandlers
 
         public override void HandlePacket(Packet packet)
         {
-            _client = packet.AuthClient;
+            _client = packet.Client;
+            _authClient = packet.AuthClient;
             _packet = packet;
-            _builder = new MessageBuilder(_client, _packet.EndPoint, _packet.SyncKey);
+            _builder = new MessageBuilder(_authClient, _client, _packet.EndPoint, _packet.SyncKey);
             switch (_packet.PacketType)
             {
                 case PacketManager.PacketTypes.StartCamera:

@@ -4,9 +4,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using UlteriusServer.Utilities;
 
 #endregion
@@ -27,9 +29,27 @@ namespace UlteriusServer.Api.Services.Network
 
         public static IPAddress GetAddress()
         {
+            //if VMware or VMPlayer installed, we get the wrong address, so try getting the physical first.
+            var address = GetPhysicalIpAdress();
+            //Default since we couldn't.
+            if (string.IsNullOrEmpty(address))
+            {
+                address = GetIPv4Address();
+            }
             var bindLocal = (bool) Settings.Get("Network").BindLocal;
+            return bindLocal ? IPAddress.Parse(address) : IPAddress.Any;
+        }
 
-            return bindLocal ? IPAddress.Parse(GetIPv4Address()) : IPAddress.Any;
+        public static string GetDisplayAddress()
+        {
+            //if VMware or VMPlayer installed, we get the wrong address, so try getting the physical first.
+            var address = GetPhysicalIpAdress();
+            //Default since we couldn't.
+            if (string.IsNullOrEmpty(address))
+            {
+                address = GetIPv4Address();
+            }
+            return address;
         }
 
         private static string GetReverseDns(string ip, int timeout)
@@ -45,26 +65,48 @@ namespace UlteriusServer.Api.Services.Network
                 return ip;
             }
         }
-
+        public static string GetPhysicalIpAdress()
+        {
+            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                var addr = ni.GetIPProperties().GatewayAddresses.FirstOrDefault();
+                if (addr == null || addr.Address.ToString().Equals("0.0.0.0")) continue;
+                if (ni.NetworkInterfaceType != NetworkInterfaceType.Wireless80211 &&
+                    ni.NetworkInterfaceType != NetworkInterfaceType.Ethernet) continue;
+                foreach (var ip in ni.GetIPProperties().UnicastAddresses)
+                {
+                    if (ip.Address.AddressFamily == AddressFamily.InterNetwork)
+                    {
+                        return ip.Address.ToString();
+                    }
+                }
+            }
+            return string.Empty;
+        }
         public static List<NetworkDevices> ConnectedDevices()
         {
+        
             var all = GetAllDevicesOnLan();
             foreach (var device in all)
             {
-                var name = device.Key.ToString();
-
+                var ip = device.Key.ToString();
+                string name;
                 var currentStatus = Convert.ToBoolean(Settings.Get("Network").SkipHostNameResolve);
                 if (!currentStatus)
                 {
                     try
                     {
-                        var hostEntry = GetReverseDns(name, 250);
-                        name = hostEntry;
+                        var hostEntry = GetReverseDns(ip, 150);
+                        name = hostEntry.Equals(ip) ? "Unknown" : hostEntry;
                     }
                     catch (SocketException)
                     {
-                        //name = "null";
+                        name = "Unknown";
                     }
+                }
+                else
+                {
+                    name = "Unknown";
                 }
                 Devices.Add(new NetworkDevices
                 {
@@ -73,7 +115,6 @@ namespace UlteriusServer.Api.Services.Network
                     MacAddress = device.Value.ToString()
                 });
             }
-
             return Devices;
         }
 
@@ -210,13 +251,25 @@ namespace UlteriusServer.Api.Services.Network
             return result;
         }
 
-        public static string GetPublicIp(string serviceUrl = "https://ipinfo.io/ip")
+        public static string GetPublicIp(string serviceUrl = "https://api.ulterius.io/network/ip/")
         {
-            var ip = new WebClient().DownloadString(serviceUrl);
-            return ip;
+            try
+            {
+                using (var webClient = new WebClient())
+                {
+                    var response = webClient.DownloadString(serviceUrl);
+                    return response;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error getting IP");
+                Console.WriteLine(ex.Message);
+                return "null";
+            }
         }
 
-        public static string GetIPv4Address()
+        private static string GetIPv4Address()
         {
             var ips = Dns.GetHostAddresses(Dns.GetHostName());
             foreach (var i in ips.Where(i => i.AddressFamily == AddressFamily.InterNetwork))

@@ -1,7 +1,10 @@
 ﻿#region
 
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Security;
+using UlteriusServer.Api.Network.Messages;
 using vtortola.WebSockets;
 
 #endregion
@@ -10,15 +13,15 @@ namespace UlteriusServer.WebSocketAPI.Authentication
 {
     public class AuthClient
     {
-        public AuthClient(WebSocket client)
+        public AuthClient()
         {
-            Client = client;
             LastUpdate = DateTime.Now;
             Authenticated = false;
             AesShook = false;
         }
 
-        public WebSocket Client { get; set; }
+        public ConcurrentDictionary<int, MessageQueueManager> MessageQueueManagers { get; set; }
+ 
         public DateTime LastUpdate { get; set; }
         public bool Authenticated { get; set; }
         public SecureString PrivateKey { get; set; }
