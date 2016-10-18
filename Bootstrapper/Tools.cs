@@ -41,9 +41,9 @@ namespace Bootstrapper
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                MessageBox.Show(mainWindow, "Error, please restart and try again: " + ex.Message);
+              //  MessageBox.Show(mainWindow, "Error, please restart and try again: " + ex.Message);
                 return false;
             }
         }
@@ -104,9 +104,9 @@ namespace Bootstrapper
                     return true;
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-               MessageBox.Show(mainWindow, "Error, please restart and try again: " + ex.Message);
+            //   MessageBox.Show(mainWindow, "Error, please restart and try again: " + ex.Message);
 
                 return false;
             }
@@ -170,9 +170,9 @@ namespace Bootstrapper
                     return true;
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                MessageBox.Show(mainWindow, "Error, please restart and try again: " + ex.Message);
+               // MessageBox.Show(mainWindow, "Error, please restart and try again: " + ex.Message);
                 return false;
             }
         }
