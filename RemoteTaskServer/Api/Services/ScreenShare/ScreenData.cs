@@ -4,11 +4,13 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Ionic.Zlib;
 using UlteriusServer.Api.Win32;
-using UlteriusServer.Utilities;
 
 #endregion
 
@@ -16,50 +18,23 @@ namespace UlteriusServer.Api.Services.ScreenShare
 {
     public class ScreenData
     {
-        public string ClipboardText = string.Empty;
-        public Bitmap NewBitmap = new Bitmap(1, 1);
+        public static Bitmap NewBitmap = new Bitmap(1, 1);
+        public static Bitmap PrevBitmap;
+        // ImageConverter object used to convert byte arrays containing JPEG or PNG file images into 
+        //  Bitmap objects. This is static and only gets instantiated once.
+        private static readonly ImageConverter ImageConverter = new ImageConverter();
 
-        public Bitmap PrevBitmap;
+        public static TcpClient ServiceClient { get; set; }
 
-        public ScreenData()
-        {
-            if (Tools.RunningPlatform() == Tools.Platform.Windows)
-            {
-                ClipboardNotifications.ClipboardUpdate += HandleClipboard;
-            }
-        }
 
         public int NumByteFullScreen { get; set; } = 1;
 
-        private void HandleClipboard(object sender, EventArgs e)
-        {
-            try
-            {
-                var clipboard = WinApi.GetText();
-                if (clipboard == null)
-                {
-                    clipboard = string.Empty;
-                    return;
-                }
-                if (clipboard.Length > 5242880)
-                {
-                    clipboard = string.Empty;
-                    return;
-                }
-                if (ClipboardText.Equals(clipboard))
-                {
-                    return;
-                }
-                ClipboardText = clipboard;
-            }
-            catch (Exception)
-            {
-                //Nothing to be done
-            }
-        }
+      
 
 
-        public byte[] PackScreenCaptureData(Bitmap image, Rectangle bounds)
+       
+
+        public static byte[] PackScreenCaptureData(Bitmap image, Rectangle bounds)
         {
             byte[] results;
             using (var screenStream = new MemoryStream())
@@ -81,9 +56,9 @@ namespace UlteriusServer.Api.Services.ScreenShare
                         image.Save(ms, ImageFormat.Jpeg);
 
                         var imgData = ms.ToArray();
-                        var compressed = ZlibStream.CompressBuffer(imgData);
+                       
                         //write the image
-                        binaryWriter.Write(compressed);
+                        binaryWriter.Write(imgData);
                     }
                 }
                 results = screenStream.ToArray();
@@ -280,7 +255,67 @@ namespace UlteriusServer.Api.Services.ScreenShare
             return new Rectangle(left, top, diffImgWidth, diffImgHeight);
         }
 
-        public  ScreenModel LocalScreen()
+
+        public static Bitmap GetImageFromByteArray(byte[] byteArray)
+        {
+            Bitmap newBitmap;
+            using (var memoryStream = new MemoryStream(byteArray))
+            using (var newImage = Image.FromStream(memoryStream))
+                newBitmap = new Bitmap(newImage);
+            return newBitmap;
+        }
+
+
+        public static  ScreenModel LocalAgentScreen(Bitmap image)
+        { 
+            var screenModel = new ScreenModel
+            {
+                Rectangle = Rectangle.Empty,
+                ScreenBitmap = null
+            };
+
+            NewBitmap = image;
+            if (NewBitmap == null)
+            {
+                return screenModel;
+            }
+            lock (NewBitmap)
+            {
+                if (PrevBitmap != null)
+                {
+                    screenModel.Rectangle = GetBoundingBoxForChanges(ref PrevBitmap, ref NewBitmap);
+                    if (screenModel.Rectangle != Rectangle.Empty)
+                    {
+                        // Get the minimum rectangular area
+                        //
+                        //diff = new Bitmap(bounds.Width, bounds.Height);
+                        screenModel.ScreenBitmap = NewBitmap.Clone(screenModel.Rectangle,
+                            NewBitmap.PixelFormat);
+                        PrevBitmap = NewBitmap;
+                    }
+                }
+                else
+                {
+                    // Create a bounding rectangle.
+                    //
+                    screenModel.Rectangle = new Rectangle(0, 0, NewBitmap.Width, NewBitmap.Height);
+
+                    // Set the previous bitmap to the current to prepare
+                    //	for the next screen capture.
+                    //
+
+                    screenModel.ScreenBitmap = NewBitmap.Clone(screenModel.Rectangle,
+                        NewBitmap.PixelFormat);
+                    PrevBitmap = NewBitmap;
+                }
+            }
+            GC.Collect();
+            GC.WaitForFullGCComplete();
+            return screenModel;
+        }
+
+
+        public static ScreenModel LocalScreen()
         {
             var screenModel = new ScreenModel
             {
@@ -290,9 +325,9 @@ namespace UlteriusServer.Api.Services.ScreenShare
             // Capture a new screenshot.
             //
             NewBitmap = CaptureDesktop();
+
             lock (NewBitmap)
             {
-                
                 if (NewBitmap == null)
                 {
                     return null;
@@ -318,47 +353,83 @@ namespace UlteriusServer.Api.Services.ScreenShare
                     // Set the previous bitmap to the current to prepare
                     //	for the next screen capture.
                     //
-                 
+
                     screenModel.ScreenBitmap = NewBitmap.Clone(screenModel.Rectangle, NewBitmap.PixelFormat);
                     PrevBitmap = NewBitmap;
-                    
                 }
             }
-            System.GC.Collect();
-            System.GC.WaitForPendingFinalizers();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
             return screenModel;
         }
-
-
-        public Bitmap CaptureDesktop()
+        public struct SIZE
         {
+            public int Cx;
+            public int Cy;
+        }
+
+        public static Bitmap CaptureDesktop()
+        {
+            var hDc = IntPtr.Zero;
             try
             {
-                var width = Screen.PrimaryScreen.Bounds.Width;
-                var height = Screen.PrimaryScreen.Bounds.Height;
-                var bmp = new Bitmap(width, height);
-
-                using (var gfxScreenshot = Graphics.FromImage(bmp))
+                Bitmap bmp = null;
                 {
-                    // image processing
-                    gfxScreenshot.CopyFromScreen(0, 0, 0, 0,
-                        new Size(
-                            width,
-                            height));
+                    try
+                    {
+                        SIZE size;
+                        hDc = WinApi.GetDC(WinApi.GetDesktopWindow());
+                        var hMemDc = Gdi.CreateCompatibleDC(hDc);
+
+                        size.Cx = WinApi.GetSystemMetrics
+                            (WinApi.SmCxscreen);
+
+                        size.Cy = WinApi.GetSystemMetrics
+                            (WinApi.SmCyscreen);
+
+                        var hBitmap = Gdi.CreateCompatibleBitmap(hDc, size.Cx, size.Cy);
+
+                        if (hBitmap != IntPtr.Zero)
+                        {
+                            var hOld = Gdi.SelectObject
+                                (hMemDc, hBitmap);
+
+                            Gdi.BitBlt(hMemDc, 0, 0, size.Cx, size.Cy, hDc,
+                                0, 0, Gdi.Srccopy);
+
+                            Gdi.SelectObject(hMemDc, hOld);
+                            Gdi.DeleteDC(hMemDc);
+                            bmp = Image.FromHbitmap(hBitmap);
+                            Gdi.DeleteObject(hBitmap);
+                            // GC.Collect();
+                        }
+                    }
+                    finally
+                    {
+                        if (hDc != IntPtr.Zero)
+                        {
+                            WinApi.ReleaseDC(WinApi.GetDesktopWindow(), hDc);
+                        }
+                    }
                 }
                 return bmp;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Console.WriteLine(ex.Message);
+                if (hDc != IntPtr.Zero)
+                {
+                    WinApi.ReleaseDC(WinApi.GetDesktopWindow(), hDc);
+                }
+                return null;
             }
-            return null;
         }
+
 
         public class ScreenModel : IDisposable
         {
             public Rectangle Rectangle { get; set; }
             public Bitmap ScreenBitmap { get; set; }
+
             public void Dispose()
             {
                 ScreenBitmap?.Dispose();

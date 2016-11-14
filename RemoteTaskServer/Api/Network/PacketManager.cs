@@ -40,7 +40,7 @@ namespace UlteriusServer.Api.Network
             ChangeNetworkResolve,
             GetCurrentSettings,
             GetEventLogs,
-            CheckUpdate,
+            CheckVersion,
             GetWindowsData,
             RestartServer,
             GetActiveWindowsSnapshots,
@@ -91,7 +91,8 @@ namespace UlteriusServer.Api.Network
             RemoveJob,
             GetJobContents,
             GetAllJobs,
-            GetDescription
+            GetDescription,
+            CtrlAltDel
         }
 
         #endregion
@@ -208,6 +209,8 @@ namespace UlteriusServer.Api.Network
                     };
                 case "startprocess":
                     return new PacketInfo {Type = PacketTypes.StartProcess, Handler = typeof(ProcessPacketHandler)};
+                case "ctrlaltdel":
+                    return new PacketInfo { Type = PacketTypes.CtrlAltDel, Handler = typeof(ScreenSharePacketHandler) };
                 case "killprocess":
                     return new PacketInfo {Type = PacketTypes.KillProcess, Handler = typeof(ProcessPacketHandler)};
                 case "savesettings":
@@ -249,6 +252,8 @@ namespace UlteriusServer.Api.Network
                     return new PacketInfo {Type = PacketTypes.SearchFiles, Handler = typeof(FilePacketHandler)};
                 case "aeshandshake":
                     return new PacketInfo {Type = PacketTypes.AesHandshake, Handler = typeof(ServerPacketHandler)};
+                case "checkversion":
+                    return new PacketInfo { Type = PacketTypes.CheckVersion, Handler = typeof(ServerPacketHandler) };
                 case "requestfile":
                     return new PacketInfo {Type = PacketTypes.RequestFile, Handler = typeof(FilePacketHandler)};
                 case "approvefile":
